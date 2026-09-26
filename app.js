@@ -7,8 +7,24 @@
 // ---------------------------------------------------------------------------
 // 1. CONFIG
 // ---------------------------------------------------------------------------
-const COMPANY_NAME = "Your Company Pvt. Ltd.";
-document.getElementById("companyName").textContent = COMPANY_NAME;
+const DEFAULT_COMPANY_NAME = "Your Company Pvt. Ltd.";
+
+function renderCompanyName() {
+  document.getElementById("companyName").textContent = Store.getSetting("companyName", DEFAULT_COMPANY_NAME);
+}
+renderCompanyName();
+
+document.getElementById("companyName").onclick = () => {
+  openModal(
+    "Edit Company Name",
+    [{ key: "name", label: "Company Name", type: "text", required: true }],
+    { name: Store.getSetting("companyName", DEFAULT_COMPANY_NAME) },
+    (values) => {
+      Store.setSetting("companyName", values.name);
+      renderCompanyName();
+    }
+  );
+};
 
 // Live AI backend (Render) — confirmed up via health check.
 const AI_BACKEND_URL = "https://site-erp-ai-backend-1.onrender.com";

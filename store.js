@@ -111,7 +111,7 @@ const Store = {
   exportAll() {
     const all = {};
     for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+      const key = localStorage.key(i);
       if (key.startsWith(DB_PREFIX)) {
         all[key.slice(DB_PREFIX.length)] = JSON.parse(localStorage.getItem(key));
       }
@@ -121,5 +121,16 @@ const Store = {
 
   importAll(obj) {
     Object.entries(obj).forEach(([name, data]) => _write(name, data));
+  },
+
+  // Single-value settings (e.g. company name) — separate from the array-based
+  // collections above, so these use a plain read/write of one value.
+  getSetting(key, fallback) {
+    const val = _read("setting_" + key);
+    return val === null ? fallback : val;
+  },
+
+  setSetting(key, value) {
+    _write("setting_" + key, value);
   },
 };

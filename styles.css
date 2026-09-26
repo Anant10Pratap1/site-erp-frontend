@@ -45,7 +45,8 @@ html, body {
 .app-name .accent { color: var(--accent); }
 
 .topbar-right { display: flex; align-items: center; gap: 14px; }
-.company-name { font-weight: 600; font-size: 14px; color: var(--text-dark); }
+.company-name { font-weight: 600; font-size: 14px; color: var(--text-dark); cursor: pointer; }
+.company-name:hover { color: var(--accent); text-decoration: underline; }
 
 .user-chip {
   width: 30px; height: 30px;
