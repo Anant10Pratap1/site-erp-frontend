@@ -873,8 +873,15 @@ function renderTabContentInPlace() {
   const holder = document.getElementById("projectTabContent");
   holder.innerHTML = renderProjectTabContent(state.activeProjectTab, state.activeProject);
   if (state.activeProjectTab === "p-material") attachMaterialTabEvents();
-  if (state.activeProjectTab === "p-party") attachPartyTabEvents();
-  if (state.activeProjectTab === "p-transactions") attachTransactionsTabEvents();
+  if (state.activeProjectTab === "p-party") {
+    attachPartyTabEvents();
+    syncThenRerender([partiesCollectionName(state.activeProject)], renderTabContentInPlace);
+  }
+  if (state.activeProjectTab === "p-transactions") {
+    attachTransactionsTabEvents();
+    const typeId = state.activeTxnType || "payment-in";
+    syncThenRerender([txnCollectionName(typeId, state.activeProject)], renderTabContentInPlace);
+  }
 }
 
 function renderProjectTabContent(tabId, project) {
@@ -1415,4 +1422,15 @@ function renderAll() {
   renderMain();
 }
 
+// Pulls the given cloud-backed collection(s) down from Supabase in the
+// background and re-renders only if something actually changed locally —
+// this is what makes data added on another browser/device show up here.
+function syncThenRerender(names, rerenderFn) {
+  if (!window.Store || typeof Store.syncPull !== "function") return;
+  Promise.all(names.map((n) => Store.syncPull(n)))
+    .then((results) => { if (results.some(Boolean)) rerenderFn(); })
+    .catch((e) => console.warn("Cloud sync failed", e));
+}
+
 renderAll();
+syncThenRerender(["projects"], renderAll);

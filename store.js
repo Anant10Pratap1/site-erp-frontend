@@ -1,17 +1,48 @@
 /* ==========================================================================
    STORE.JS — data access layer
-   Right now everything is backed by localStorage (free, zero-server, works
-   for one person testing on one machine/browser).
+   Backed by localStorage for instant, synchronous reads (so app.js's
+   rendering code never has to change or become async), AND synced in the
+   background to a Supabase Postgres database so data survives browser
+   resets and is shared across devices/people.
 
-   IMPORTANT — swap-out point for later:
-   When you have a real client and move to a real backend, you only need to
-   rewrite the 5 functions below (getCollection / saveCollection / addItem /
-   updateItem / removeItem) to call your API / n8n webhook / Google Sheet
-   instead of localStorage. Nothing in app.js needs to change, because it
-   only ever talks to these 5 functions.
+   How the sync works:
+   - Every collection app.js asks for goes through getCollection/addItem/
+     updateItem/removeItem exactly as before — nothing in app.js changes.
+   - For the collections we've wired up so far (the global "projects" list,
+     each project's "parties__<projectId>" list, and each project's
+     "txn__<typeId>__<projectId>" list), writes are also pushed to a single
+     generic Supabase table called "records" in the background (fire and
+     forget — if the network/Supabase is down, the app keeps working off
+     localStorage and just doesn't get the cloud copy of that one write).
+   - Store.syncPull(name) pulls the latest rows for a synced collection down
+     from Supabase into localStorage. app.js calls this right when a project
+     is opened / a tab is switched, and re-renders if anything changed, so
+     data added from another browser/device shows up.
+   - Adding a new tab's collection to the cloud later is a one-line change:
+     add its name pattern to _isSynced() below. No new Supabase table needed
+     — everything lands in the same generic "records" table.
    ========================================================================== */
 
 const DB_PREFIX = "siteerp_";
+
+// ---------------------------------------------------------------------------
+// Supabase connection (safe to keep these values in client-side code — this
+// is the public "anon" key, meant to be shipped in frontend JS; it can only
+// do what the database's row-level-security policies allow it to do).
+// ---------------------------------------------------------------------------
+const SUPABASE_URL = "https://nyrseggowmekzrtzheto.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_URAuB6FimVsPjXi_UAMNDg_b5vLRuDQ";
+
+let _sb = null;
+try {
+  if (window.supabase && typeof window.supabase.createClient === "function") {
+    _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } else {
+    console.warn("Supabase client script did not load — running on localStorage only.");
+  }
+} catch (e) {
+  console.warn("Supabase client init failed — running on localStorage only.", e);
+}
 
 function _read(name) {
   try {
@@ -36,6 +67,68 @@ function uid() {
 }
 
 // ---------------------------------------------------------------------------
+// Cloud sync helpers — which collections are cloud-backed, and how to talk
+// to the generic "records" table for them.
+// ---------------------------------------------------------------------------
+function _isSynced(name) {
+  return name === "projects" || name.startsWith("parties__") || name.startsWith("txn__");
+}
+
+function _projectIdFor(name) {
+  if (name === "projects") return null;
+  const parts = name.split("__");
+  return parts[parts.length - 1];
+}
+
+async function _pullFromCloud(name) {
+  if (!_sb || !_isSynced(name)) return false;
+  try {
+    const { data, error } = await _sb
+      .from("records")
+      .select("id,data")
+      .eq("collection", name)
+      .order("created_at", { ascending: true });
+    if (error) {
+      console.warn("Supabase pull failed for", name, error.message);
+      return false;
+    }
+    const rows = (data || []).map((r) => ({ id: r.id, ...r.data }));
+    const before = JSON.stringify(_read(name) || []);
+    const after = JSON.stringify(rows);
+    _write(name, rows);
+    return before !== after;
+  } catch (e) {
+    console.warn("Supabase pull threw for", name, e);
+    return false;
+  }
+}
+
+function _pushInsert(name, record) {
+  if (!_sb || !_isSynced(name)) return;
+  const { id, ...data } = record;
+  _sb.from("records")
+    .insert({ id, collection: name, project_id: _projectIdFor(name), data })
+    .then(({ error }) => { if (error) console.warn("Supabase insert failed for", name, error.message); });
+}
+
+function _pushUpdate(name, id, record) {
+  if (!_sb || !_isSynced(name)) return;
+  const { id: _drop, ...data } = record;
+  _sb.from("records")
+    .update({ data, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .then(({ error }) => { if (error) console.warn("Supabase update failed for", name, error.message); });
+}
+
+function _pushDelete(name, id) {
+  if (!_sb || !_isSynced(name)) return;
+  _sb.from("records")
+    .delete()
+    .eq("id", id)
+    .then(({ error }) => { if (error) console.warn("Supabase delete failed for", name, error.message); });
+}
+
+// ---------------------------------------------------------------------------
 // Public data-access API — everything in app.js goes through these
 // ---------------------------------------------------------------------------
 const Store = {
@@ -57,6 +150,7 @@ const Store = {
     const record = { id: uid(), createdAt: new Date().toISOString(), ...item };
     data.push(record);
     _write(name, data);
+    _pushInsert(name, record);
     return record;
   },
 
@@ -66,6 +160,7 @@ const Store = {
     if (idx !== -1) {
       data[idx] = { ...data[idx], ...patch, updatedAt: new Date().toISOString() };
       _write(name, data);
+      _pushUpdate(name, id, data[idx]);
       return data[idx];
     }
     return null;
@@ -79,6 +174,7 @@ const Store = {
     if (idx === -1) return;
     const [removed] = data.splice(idx, 1);
     _write(name, data);
+    _pushDelete(name, id);
 
     const logs = Store.getCollection("deletedLogs", []);
     logs.unshift({
@@ -100,6 +196,7 @@ const Store = {
     const data = Store.getCollection(log.collection, []);
     data.push(log.record);
     _write(log.collection, data);
+    _pushInsert(log.collection, log.record);
   },
 
   purgeLog(logId) {
@@ -132,5 +229,17 @@ const Store = {
 
   setSetting(key, value) {
     _write("setting_" + key, value);
+  },
+
+  // Pull the latest rows for a cloud-backed collection down from Supabase
+  // into localStorage. Resolves to true if the local copy changed (so the
+  // caller knows whether it's worth re-rendering). Safe to call on a
+  // collection that isn't cloud-backed — it just resolves to false.
+  async syncPull(name) {
+    return _pullFromCloud(name);
+  },
+
+  isSynced(name) {
+    return _isSynced(name);
   },
 };
