@@ -1426,7 +1426,7 @@ function renderAll() {
 // background and re-renders only if something actually changed locally —
 // this is what makes data added on another browser/device show up here.
 function syncThenRerender(names, rerenderFn) {
-  if (!window.Store || typeof Store.syncPull !== "function") return;
+  if (typeof Store === "undefined" || typeof Store.syncPull !== "function") return;
   Promise.all(names.map((n) => Store.syncPull(n)))
     .then((results) => { if (results.some(Boolean)) rerenderFn(); })
     .catch((e) => console.warn("Cloud sync failed", e));
