@@ -333,6 +333,66 @@ const MATERIAL_ENTRY_FIELDS = [
 ];
 
 // ---------------------------------------------------------------------------
+// 3c. PARTY + TRANSACTIONS CONFIG
+// ---------------------------------------------------------------------------
+const PARTY_FIELDS = [
+  { key: "name", label: "Party Name", type: "text", required: true },
+  { key: "type", label: "Type", type: "select", options: ["Client", "Vendor", "Subcontractor", "Other"] },
+  { key: "balance", label: "Balance (INR)", type: "number" },
+  { key: "status", label: "Status", type: "select", options: ["Active", "Inactive"] },
+];
+
+const TRANSACTION_GROUPS = [
+  {
+    group: "Payment",
+    items: [
+      { id: "payment-in", label: "Payment In" },
+      { id: "payment-out", label: "Payment Out" },
+      { id: "debit-note", label: "Debit Note" },
+      { id: "credit-note", label: "Credit Note" },
+      { id: "party-to-party", label: "Party to Party Payment" },
+    ],
+  },
+  {
+    group: "Sales",
+    items: [
+      { id: "sales-invoice", label: "Sales Invoice" },
+      { id: "material-sales", label: "Material Sales" },
+    ],
+  },
+  {
+    group: "Expense",
+    items: [
+      { id: "material-purchase", label: "Material Purchase" },
+      { id: "material-return", label: "Material Return" },
+      { id: "material-transfer", label: "Material Transfer" },
+      { id: "subcon-bill", label: "Subcon Bill" },
+      { id: "other-expenses", label: "Other Expenses" },
+      { id: "equipment-expense", label: "Equipment Expense" },
+    ],
+  },
+];
+
+function findTxnTypeLabel(id) {
+  for (const g of TRANSACTION_GROUPS) {
+    const item = g.items.find((i) => i.id === id);
+    if (item) return item.label;
+  }
+  return id;
+}
+
+function transactionFields(project) {
+  return [
+    { key: "date", label: "Date", type: "date", required: true },
+    { key: "partyName", label: "Party Name", type: "select", dynamicSource: partiesCollectionName(project), optionField: "name", required: true },
+    { key: "amount", label: "Amount (INR)", type: "number", required: true },
+    { key: "paymentMethod", label: "Payment Method", type: "select", options: ["Cash", "Bank", "Cheque"] },
+    { key: "costCode", label: "Cost Code", type: "select", dynamicSource: "costCodes", optionField: "code" },
+    { key: "remarks", label: "Remarks", type: "text" },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // 4. APP STATE
 // ---------------------------------------------------------------------------
 const state = {
@@ -342,6 +402,9 @@ const state = {
   activeProjectTab: "p-dashboard",
   activePayrollTab: "office-staff",
   activeProcurementTab: "rfq",
+  activeTxnType: "payment-in",
+  txnPanelOpen: true,
+  txnSearch: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -728,7 +791,7 @@ function renderCrudPage(cfg) {
     <div class="page-header-row">
       <div>
         <h1 class="page-title">${cfg.title}</h1>
-        <p class="page-subtitle">Master data used across all projects.</p>
+        <p class="page-subtitle">${cfg.subtitle || "Master data used across all projects."}</p>
       </div>
       <button class="btn-primary" id="crudAddBtn">+ Add Entry</button>
     </div>
@@ -810,10 +873,14 @@ function renderTabContentInPlace() {
   const holder = document.getElementById("projectTabContent");
   holder.innerHTML = renderProjectTabContent(state.activeProjectTab, state.activeProject);
   if (state.activeProjectTab === "p-material") attachMaterialTabEvents();
+  if (state.activeProjectTab === "p-party") attachPartyTabEvents();
+  if (state.activeProjectTab === "p-transactions") attachTransactionsTabEvents();
 }
 
 function renderProjectTabContent(tabId, project) {
   if (tabId === "p-material") return renderMaterialTab(project);
+  if (tabId === "p-party") return renderPartyTab(project);
+  if (tabId === "p-transactions") return renderTransactionsTab(project);
 
   const label = PROJECT_TABS.find((t) => t.id === tabId)?.label || tabId;
   return `
@@ -966,6 +1033,283 @@ function attachMaterialTabEvents() {
       }
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// 12b. PARTY TAB — per-project list of clients / vendors / subcontractors.
+//      Reuses the generic CRUD renderer, same as Library pages.
+// ---------------------------------------------------------------------------
+function partiesCollectionName(project) {
+  return `parties__${project.id}`;
+}
+
+function partyCfg(project) {
+  return {
+    title: "Party",
+    subtitle: "All parties (clients, vendors, subcontractors) linked to this project.",
+    collection: partiesCollectionName(project),
+    fields: PARTY_FIELDS,
+  };
+}
+
+function renderPartyTab(project) {
+  return renderCrudPage(partyCfg(project));
+}
+
+function attachPartyTabEvents() {
+  attachCrudEvents(partyCfg(state.activeProject), renderTabContentInPlace);
+}
+
+// ---------------------------------------------------------------------------
+// 12c. TRANSACTIONS TAB — Payment / Sales / Expense sub-types, each its own
+//      per-project collection, sharing one field schema + a receipt popup.
+// ---------------------------------------------------------------------------
+function txnCollectionName(typeId, project) {
+  return `txn__${typeId}__${project.id}`;
+}
+
+function renderTransactionsTab(project) {
+  const activeType = state.activeTxnType || "payment-in";
+  const groupsHtml = TRANSACTION_GROUPS.map((g) => `
+    <div class="txn-group-label">${g.group}</div>
+    ${g.items.map((i) => `<div class="txn-nav-item ${activeType === i.id ? "active" : ""}" data-id="${i.id}">${i.label}</div>`).join("")}
+  `).join("");
+
+  return `
+    <div class="txn-toolbar">
+      <button class="btn-primary" id="paymentRequestBtn">+ Payment Request</button>
+      <input type="text" id="txnSearchInput" class="form-input" style="max-width:220px;" placeholder="Search party / remarks..." value="${state.txnSearch || ""}" />
+      <div class="txn-toolbar-right">
+        <span class="txn-icon-btn" id="unbilledMaterialBtn" title="Unbilled Material">&#128666;</span>
+        <span class="txn-icon-btn" id="pendingEntriesBtn" title="Pending Entries">&#128077;</span>
+        <span class="txn-icon-btn" id="downloadTxnBtn" title="Download this list (CSV)">&#11015;</span>
+        <span class="txn-icon-btn" id="togglePanelBtn" title="Show/hide transaction menu">&#9776;</span>
+      </div>
+    </div>
+    <div class="txn-layout">
+      <div class="txn-side-panel ${state.txnPanelOpen ? "" : "collapsed"}" id="txnSidePanel">${groupsHtml}</div>
+      <div class="txn-content" id="txnTypeContent">${renderTxnTypeContent(activeType, project)}</div>
+    </div>
+  `;
+}
+
+function renderTxnTypeContent(typeId, project) {
+  const label = findTxnTypeLabel(typeId);
+  const colName = txnCollectionName(typeId, project);
+  const rows = Store.getCollection(colName, []);
+  const q = (state.txnSearch || "").toLowerCase();
+  const filtered = q
+    ? rows.filter((r) => (r.partyName || "").toLowerCase().includes(q) || (r.remarks || "").toLowerCase().includes(q))
+    : rows;
+
+  const bodyRows = filtered.map((r) => `
+    <tr>
+      <td>${r.date || ""}</td>
+      <td>${r.partyName || ""}</td>
+      <td>&#8377; ${Number(r.amount || 0).toLocaleString("en-IN")}</td>
+      <td>${r.paymentMethod || ""}</td>
+      <td>${r.costCode || ""}</td>
+      <td>${r.remarks || ""}</td>
+      <td>
+        <span class="link-action" data-action="receipt" data-id="${r.id}">Receipt</span>
+        &nbsp;|&nbsp;
+        <span class="link-action" data-action="edit" data-id="${r.id}">Edit</span>
+        &nbsp;|&nbsp;
+        <span class="link-action danger" data-action="delete" data-id="${r.id}">Delete</span>
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);">No ${label} entries yet.</td></tr>`;
+
+  const total = filtered.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+
+  return `
+    <div class="page-header-row" style="margin-bottom:12px;">
+      <div>
+        <h2 style="margin:0;font-size:16px;">${label}</h2>
+        <p class="page-subtitle" style="margin:4px 0 0 0;">Total: &#8377; ${total.toLocaleString("en-IN")}</p>
+      </div>
+      <button class="btn-primary" id="txnAddBtn">+ Add ${label}</button>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Date</th><th>Party</th><th>Amount</th><th>Method</th><th>Cost Code</th><th>Remarks</th><th style="width:190px;">Actions</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+}
+
+function attachTransactionsTabEvents() {
+  const project = state.activeProject;
+
+  document.querySelectorAll(".txn-nav-item").forEach((item) => {
+    item.onclick = () => {
+      state.activeTxnType = item.dataset.id;
+      renderTabContentInPlace();
+    };
+  });
+
+  const toggleBtn = document.getElementById("togglePanelBtn");
+  if (toggleBtn) {
+    toggleBtn.onclick = () => {
+      state.txnPanelOpen = !state.txnPanelOpen;
+      renderTabContentInPlace();
+    };
+  }
+
+  const searchInput = document.getElementById("txnSearchInput");
+  if (searchInput) {
+    searchInput.oninput = (e) => {
+      state.txnSearch = e.target.value;
+      document.getElementById("txnTypeContent").innerHTML = renderTxnTypeContent(state.activeTxnType, project);
+      attachTxnTypeContentEvents(project);
+    };
+  }
+
+  const unbilledBtn = document.getElementById("unbilledMaterialBtn");
+  if (unbilledBtn) {
+    unbilledBtn.onclick = () => {
+      const matLog = Store.getCollection(materialCollectionName(project), []);
+      const unbilled = matLog.filter((m) => (m.direction || "").startsWith("In")).length;
+      alert(`Unbilled Material: ${unbilled} incoming material entr${unbilled === 1 ? "y" : "ies"} logged for this project.\n\n(Bill-matching against Material Purchase entries can be refined later.)`);
+    };
+  }
+
+  const pendingBtn = document.getElementById("pendingEntriesBtn");
+  if (pendingBtn) {
+    pendingBtn.onclick = () => {
+      const totalEntries = TRANSACTION_GROUPS.flatMap((g) => g.items)
+        .reduce((sum, i) => sum + Store.getCollection(txnCollectionName(i.id, project), []).length, 0);
+      alert(`Pending Entries: ${totalEntries} transaction${totalEntries === 1 ? "" : "s"} logged so far across all types for this project.`);
+    };
+  }
+
+  const downloadBtn = document.getElementById("downloadTxnBtn");
+  if (downloadBtn) {
+    downloadBtn.onclick = () => {
+      const typeId = state.activeTxnType;
+      const label = findTxnTypeLabel(typeId);
+      const rows = Store.getCollection(txnCollectionName(typeId, project), []);
+      const header = "Date,Party,Amount,Method,Cost Code,Remarks\n";
+      const body = rows.map((r) => [r.date, r.partyName, r.amount, r.paymentMethod, r.costCode, r.remarks]
+        .map((v) => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([header + body], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${label.replace(/\s+/g, "_")}-${project.name.replace(/\s+/g, "_")}.csv`;
+      a.click();
+    };
+  }
+
+  const paymentRequestBtn = document.getElementById("paymentRequestBtn");
+  if (paymentRequestBtn) {
+    paymentRequestBtn.onclick = () => {
+      openModal("Payment Request", transactionFields(project), {}, (values) => {
+        Store.addItem(txnCollectionName("payment-in", project), { ...values, requestFlag: true }, []);
+        state.activeTxnType = "payment-in";
+        renderTabContentInPlace();
+      });
+    };
+  }
+
+  attachTxnTypeContentEvents(project);
+}
+
+function attachTxnTypeContentEvents(project) {
+  const typeId = state.activeTxnType || "payment-in";
+  const colName = txnCollectionName(typeId, project);
+  const label = findTxnTypeLabel(typeId);
+
+  const addBtn = document.getElementById("txnAddBtn");
+  if (addBtn) {
+    addBtn.onclick = () => {
+      openModal(`Add ${label}`, transactionFields(project), {}, (values) => {
+        Store.addItem(colName, values, []);
+        renderTabContentInPlace();
+      });
+    };
+  }
+
+  document.querySelectorAll('.link-action[data-action="edit"]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = Store.getCollection(colName, []).find((r) => r.id === btn.dataset.id);
+      openModal(`Edit ${label}`, transactionFields(project), row, (values) => {
+        Store.updateItem(colName, row.id, values, []);
+        renderTabContentInPlace();
+      });
+    };
+  });
+
+  document.querySelectorAll('.link-action[data-action="delete"]').forEach((btn) => {
+    btn.onclick = () => {
+      if (confirm("Move this entry to Delete Logs?")) {
+        Store.removeItem(colName, btn.dataset.id, []);
+        renderTabContentInPlace();
+      }
+    };
+  });
+
+  document.querySelectorAll('.link-action[data-action="receipt"]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = Store.getCollection(colName, []).find((r) => r.id === btn.dataset.id);
+      showReceipt(label, row, project);
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 12d. RECEIPT POPUP — printable/PDF-able summary for any transaction entry.
+// ---------------------------------------------------------------------------
+function showReceipt(typeLabel, row, project) {
+  if (!row) return;
+  const companyName = Store.getSetting("companyName", DEFAULT_COMPANY_NAME);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "receiptOverlay";
+  overlay.innerHTML = `
+    <div class="modal-box receipt-box">
+      <div class="modal-header">
+        <span>${typeLabel} Receipt</span>
+        <span class="modal-close" id="receiptCloseBtn">&times;</span>
+      </div>
+      <div class="modal-body receipt-body" id="receiptPrintArea">
+        <div class="receipt-company">${companyName}</div>
+        <div class="receipt-sub">${project.name}${project.location ? " &middot; " + project.location : ""}</div>
+        <hr/>
+        <div class="receipt-row"><span>Type</span><strong>${typeLabel}</strong></div>
+        <div class="receipt-row"><span>Date</span><strong>${row.date || "—"}</strong></div>
+        <div class="receipt-row"><span>Party</span><strong>${row.partyName || "—"}</strong></div>
+        <div class="receipt-row"><span>Amount</span><strong>&#8377; ${Number(row.amount || 0).toLocaleString("en-IN")}</strong></div>
+        <div class="receipt-row"><span>Payment Method</span><strong>${row.paymentMethod || "—"}</strong></div>
+        <div class="receipt-row"><span>Cost Code</span><strong>${row.costCode || "—"}</strong></div>
+        <div class="receipt-row"><span>Remarks</span><strong>${row.remarks || "—"}</strong></div>
+        <hr/>
+        <div class="receipt-footer">Generated by Site ERP</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" id="receiptCloseBtn2">Close</button>
+        <button class="btn-primary" id="receiptPrintBtn">Print / Save PDF</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("receiptCloseBtn").onclick = () => overlay.remove();
+  document.getElementById("receiptCloseBtn2").onclick = () => overlay.remove();
+  document.getElementById("receiptPrintBtn").onclick = () => {
+    const printContents = document.getElementById("receiptPrintArea").innerHTML;
+    const printWin = window.open("", "_blank");
+    printWin.document.write(`<html><head><title>${typeLabel} Receipt</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:24px;color:#1c2b36;}
+        .receipt-company{font-size:18px;font-weight:700;}
+        .receipt-sub{color:#6b7a85;margin-bottom:12px;}
+        .receipt-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;}
+        .receipt-footer{margin-top:16px;color:#6b7a85;font-size:12px;text-align:center;}
+        hr{border:none;border-top:1px solid #e2e6ea;margin:12px 0;}
+      </style>
+    </head><body>${printContents}</body></html>`);
+    printWin.document.close();
+    printWin.focus();
+    printWin.print();
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -421,3 +421,72 @@ html, body {
 }
 .ai-box-status.ok { color: #1a8a4a; }
 .ai-box-status.warn { color: #b9770e; }
+
+/* ===================== TRANSACTIONS TAB ===================== */
+.txn-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.txn-toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.txn-icon-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+}
+.txn-icon-btn:hover { background: var(--accent); color: #fff; }
+
+.txn-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.txn-side-panel {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  border-radius: var(--radius);
+  padding: 10px 0;
+  color: var(--sidebar-text);
+}
+.txn-side-panel.collapsed { display: none; }
+.txn-group-label {
+  padding: 10px 16px 4px 16px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #7f93a1;
+  font-weight: 700;
+}
+.txn-nav-item {
+  padding: 8px 16px;
+  font-size: 13.5px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.txn-nav-item:hover { background: var(--sidebar-bg-hover); color: var(--sidebar-text-active); }
+.txn-nav-item.active {
+  background: var(--sidebar-bg-hover);
+  color: var(--sidebar-text-active);
+  border-left: 3px solid var(--accent);
+  font-weight: 600;
+}
+.txn-content { flex: 1; min-width: 0; }
+
+/* Receipt popup */
+.receipt-box { width: 460px; }
+.receipt-body { font-size: 13.5px; }
+.receipt-company { font-size: 18px; font-weight: 700; }
+.receipt-sub { color: var(--text-muted); margin-bottom: 10px; }
+.receipt-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.receipt-footer { margin-top: 14px; color: var(--text-muted); font-size: 12px; text-align: center; }
