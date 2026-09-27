@@ -321,6 +321,8 @@ const PROJECT_FIELDS = [
   { key: "status", label: "Status", type: "select", options: ["Active", "On Hold", "Completed"] },
   { key: "startDate", label: "Start Date", type: "date" },
   { key: "progress", label: "Progress (%)", type: "number" },
+  { key: "budget", label: "Project Budget (INR)", type: "number" },
+  { key: "value", label: "Project Value (INR)", type: "number" },
 ];
 
 const MATERIAL_ENTRY_FIELDS = [
@@ -337,10 +339,61 @@ const MATERIAL_ENTRY_FIELDS = [
 // ---------------------------------------------------------------------------
 const PARTY_FIELDS = [
   { key: "name", label: "Party Name", type: "text", required: true },
-  { key: "type", label: "Type", type: "select", options: ["Client", "Vendor", "Subcontractor", "Other"] },
+  {
+    key: "type",
+    label: "Type",
+    type: "select",
+    options: ["Client", "Labour Contractor", "Material Supplier", "Vendor", "Subcontractor", "Worker", "Staff", "Other"],
+  },
   { key: "balance", label: "Balance (INR)", type: "number" },
-  { key: "status", label: "Status", type: "select", options: ["Active", "Inactive"] },
+  {
+    key: "status",
+    label: "Status",
+    type: "select",
+    options: ["Advance Paid", "Advance Received", "To Pay", "Settled"],
+  },
 ];
+
+// Party avatar + tag color helpers (used by the redesigned Party tab).
+const PARTY_AVATAR_COLORS = ["#3b82f6", "#f59e0b", "#8b5cf6", "#10b981", "#ef4444", "#06b6d4", "#ec4899", "#84cc16"];
+
+function partyInitials(name) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function partyAvatarColor(name) {
+  const str = name || "";
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return PARTY_AVATAR_COLORS[hash % PARTY_AVATAR_COLORS.length];
+}
+
+const PARTY_TYPE_TAG_CLASS = {
+  "Client": "tag-blue",
+  "Labour Contractor": "tag-orange",
+  "Material Supplier": "tag-purple",
+  "Vendor": "tag-purple",
+  "Subcontractor": "tag-orange",
+  "Worker": "tag-green",
+  "Staff": "tag-yellow",
+  "Other": "tag-gray",
+};
+function partyTypeClass(type) {
+  return PARTY_TYPE_TAG_CLASS[type] || "tag-gray";
+}
+
+const PARTY_STATUS_TAG_CLASS = {
+  "Advance Paid": "tag-status-green",
+  "Advance Received": "tag-status-blue",
+  "To Pay": "tag-status-red",
+  "Settled": "tag-status-gray",
+};
+function partyStatusClass(status) {
+  return PARTY_STATUS_TAG_CLASS[status] || "tag-status-gray";
+}
 
 const TRANSACTION_GROUPS = [
   {
@@ -371,7 +424,28 @@ const TRANSACTION_GROUPS = [
       { id: "equipment-expense", label: "Equipment Expense" },
     ],
   },
+  {
+    group: "My Account",
+    items: [
+      { id: "i-paid", label: "I Paid" },
+      { id: "i-received", label: "I Received" },
+    ],
+  },
 ];
+
+// ids belonging to each summary bucket, used by the Transactions-tab
+// "Project Balance" (In - Out) and "Margin" (Sales - Expense) kpi cards.
+const TXN_IN_TYPES = ["payment-in"];
+const TXN_OUT_TYPES = ["payment-out"];
+const TXN_SALES_TYPES = ["sales-invoice", "material-sales"];
+const TXN_EXPENSE_TYPES = ["material-purchase", "subcon-bill", "other-expenses", "equipment-expense"];
+
+function sumTxnAmount(project, typeIds) {
+  return typeIds.reduce((sum, typeId) => {
+    const rows = Store.getCollection(txnCollectionName(typeId, project), []);
+    return sum + rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  }, 0);
+}
 
 function findTxnTypeLabel(id) {
   for (const g of TRANSACTION_GROUPS) {
@@ -558,6 +632,7 @@ function renderMain() {
   }
   if (state.activeSidebar === "dashboard") {
     el.innerHTML = renderDashboard();
+    attachDashboardEvents();
     return;
   }
   if (state.activeSidebar === "delete-logs") {
@@ -668,23 +743,100 @@ function findSidebarLabel(id) {
 // ---------------------------------------------------------------------------
 function renderDashboard() {
   const projects = Store.getCollection("projects", []);
-  const materials = Store.getCollection("materials", []);
-  const activeCount = projects.filter((p) => p.status === "Active").length;
+
+  // "Approval (Pending)" = payment requests raised via +Payment Request that
+  // haven't been actioned yet (Store.addItem tags these with requestFlag).
+  const approvalPending = projects.reduce((sum, p) => {
+    const rows = Store.getCollection(txnCollectionName("payment-in", p), []);
+    return sum + rows.filter((r) => r.requestFlag).length;
+  }, 0);
+
+  // "Material (Pending)" = material log entries marked as received, i.e.
+  // stock that has come in and is awaiting further processing/use.
+  const materialPending = projects.reduce((sum, p) => {
+    const rows = Store.getCollection(`materialLog__${p.id}`, []);
+    return sum + rows.filter((r) => r.direction === "In (Received)").length;
+  }, 0);
+
+  const todoPending = 0; // no dedicated To Do module yet
+
+  const rows = projects.map((p) => {
+    const inTotal = sumTxnAmount(p, TXN_IN_TYPES);
+    const outTotal = sumTxnAmount(p, TXN_OUT_TYPES);
+    const progress = Math.max(0, Math.min(100, Number(p.progress) || 0));
+    return `
+      <tr class="dash-project-row" data-id="${p.id}">
+        <td>
+          <div class="project-name-cell">
+            <div class="project-card-title" style="margin:0;">${p.name}</div>
+            <div class="project-card-meta" style="margin:0;">${p.location || "—"}</div>
+          </div>
+        </td>
+        <td>
+          <div class="progress-track"><div class="progress-fill" style="width:${progress}%;"></div></div>
+          <div class="progress-pct">${progress}%</div>
+        </td>
+        <td>
+          <span class="tag tag-green">In &#8377; ${inTotal.toLocaleString("en-IN")}</span><br/>
+          <span class="tag tag-orange">Out &#8377; ${outTotal.toLocaleString("en-IN")}</span>
+        </td>
+        <td>—</td>
+        <td>&#8377; ${Number(p.budget || 0).toLocaleString("en-IN")}</td>
+        <td>&#8377; ${Number(p.value || 0).toLocaleString("en-IN")}</td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">No projects yet — click "+ New Project" on the Projects page to add one.</td></tr>`;
 
   return `
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">Company-wide overview across all projects.</p>
+    <div class="dash-action-row">
+      <button class="btn-ghost dash-action-btn" data-action="demo">&#128197; Book Demo</button>
+      <button class="btn-ghost dash-action-btn" data-action="integrate">&#128279; Integrate Tally/Zoho</button>
+      <button class="btn-ghost dash-action-btn" data-action="refer">&#127873; Refer &amp; Earn</button>
+      <button class="btn-ghost dash-action-btn" data-action="leaderboard">&#127942; Leaderboard</button>
+    </div>
     <div class="kpi-row">
-      <div class="kpi-card"><div class="kpi-label">Total Projects</div><div class="kpi-value">${projects.length}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Active Projects</div><div class="kpi-value">${activeCount}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Materials in Library</div><div class="kpi-value">${materials.length}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Deleted Items Logged</div><div class="kpi-value">${Store.getCollection("deletedLogs", []).length}</div></div>
+      <div class="kpi-card kpi-card-red"><div class="kpi-label">Approval (Pending)</div><div class="kpi-value">${approvalPending}</div></div>
+      <div class="kpi-card kpi-card-blue"><div class="kpi-label">Material (Pending)</div><div class="kpi-value">${materialPending}</div></div>
+      <div class="kpi-card"><div class="kpi-label">To Do (Pending)</div><div class="kpi-value">${todoPending}</div></div>
     </div>
-    <div class="placeholder-card">
-      <strong>Company-wide charts &amp; recent activity feed</strong>
-      Add Projects and Material Library entries from the sidebar, then open a project → Material tab to log real transactions here.
+    <div class="page-header-row">
+      <div>
+        <h1 class="page-title">Projects</h1>
+        <p class="page-subtitle">Company-wide overview across all projects. Click a row to open it.</p>
+      </div>
+      <button class="btn-primary" id="dashNewProjectBtn">+ New Project</button>
     </div>
+    <table class="data-table">
+      <thead><tr><th>Name</th><th style="width:130px;">Progress</th><th>In / Out</th><th>To Do</th><th>Project Budget</th><th>Project Value</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
   `;
+}
+
+function attachDashboardEvents() {
+  const newBtn = document.getElementById("dashNewProjectBtn");
+  if (newBtn) {
+    newBtn.onclick = () => {
+      openModal("New Project", PROJECT_FIELDS, {}, (values) => {
+        Store.addItem("projects", values, []);
+        renderAll();
+      });
+    };
+  }
+
+  document.querySelectorAll(".dash-project-row").forEach((row) => {
+    row.onclick = () => {
+      const project = Store.getCollection("projects", []).find((p) => p.id === row.dataset.id);
+      if (!project) return;
+      state.activeProject = project;
+      state.activeProjectTab = state.activeProjectTab || "p-material";
+      renderAll();
+    };
+  });
+
+  document.querySelectorAll(".dash-action-btn").forEach((btn) => {
+    btn.onclick = () => alert("Coming soon.");
+  });
 }
 
 function renderPlaceholder(title, note) {
@@ -1060,7 +1212,57 @@ function partyCfg(project) {
 }
 
 function renderPartyTab(project) {
-  return renderCrudPage(partyCfg(project));
+  const rows = Store.getCollection(partiesCollectionName(project), []);
+
+  const advancePaidTotal = rows
+    .filter((r) => r.status === "Advance Paid")
+    .reduce((sum, r) => sum + Number(r.balance || 0), 0);
+  const toPayTotal = rows
+    .filter((r) => r.status === "To Pay")
+    .reduce((sum, r) => sum + Number(r.balance || 0), 0);
+
+  const bodyRows = rows.map((r) => `
+    <tr>
+      <td>
+        <div class="party-cell">
+          <span class="party-avatar" style="background:${partyAvatarColor(r.name)};">${partyInitials(r.name)}</span>
+          <span>${r.name || ""}</span>
+        </div>
+      </td>
+      <td><span class="tag ${partyTypeClass(r.type)}">${r.type || "—"}</span></td>
+      <td>&#8377; ${Number(r.balance || 0).toLocaleString("en-IN")}</td>
+      <td><span class="tag ${partyStatusClass(r.status)}">${r.status || "—"}</span></td>
+      <td>
+        <span class="link-action" data-action="edit" data-id="${r.id}">Edit</span>
+        &nbsp;|&nbsp;
+        <span class="link-action danger" data-action="delete" data-id="${r.id}">Delete</span>
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No parties added yet.</td></tr>`;
+
+  return `
+    <div class="page-header-row">
+      <div>
+        <h1 class="page-title">Party</h1>
+        <p class="page-subtitle">All parties (clients, vendors, subcontractors) linked to this project.</p>
+      </div>
+      <button class="btn-primary" id="crudAddBtn">+ Add Entry</button>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-card kpi-card-green">
+        <div class="kpi-label">Advance Paid</div>
+        <div class="kpi-value">&#8377; ${advancePaidTotal.toLocaleString("en-IN")}</div>
+      </div>
+      <div class="kpi-card kpi-card-red">
+        <div class="kpi-label">To Pay</div>
+        <div class="kpi-value">&#8377; ${toPayTotal.toLocaleString("en-IN")}</div>
+      </div>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Party Name</th><th>Type</th><th>Balance</th><th>Status</th><th style="width:140px;">Actions</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
 }
 
 function attachPartyTabEvents() {
@@ -1082,7 +1284,20 @@ function renderTransactionsTab(project) {
     ${g.items.map((i) => `<div class="txn-nav-item ${activeType === i.id ? "active" : ""}" data-id="${i.id}">${i.label}</div>`).join("")}
   `).join("");
 
+  const projectBalance = sumTxnAmount(project, TXN_IN_TYPES) - sumTxnAmount(project, TXN_OUT_TYPES);
+  const margin = sumTxnAmount(project, TXN_SALES_TYPES) - sumTxnAmount(project, TXN_EXPENSE_TYPES);
+
   return `
+    <div class="kpi-row">
+      <div class="kpi-card ${projectBalance >= 0 ? "kpi-card-green" : "kpi-card-red"}">
+        <div class="kpi-label">Project Balance</div>
+        <div class="kpi-value">&#8377; ${projectBalance.toLocaleString("en-IN")}</div>
+      </div>
+      <div class="kpi-card ${margin >= 0 ? "kpi-card-blue" : "kpi-card-red"}">
+        <div class="kpi-label">Margin</div>
+        <div class="kpi-value">&#8377; ${margin.toLocaleString("en-IN")}</div>
+      </div>
+    </div>
     <div class="txn-toolbar">
       <button class="btn-primary" id="paymentRequestBtn">+ Payment Request</button>
       <input type="text" id="txnSearchInput" class="form-input" style="max-width:220px;" placeholder="Search party / remarks..." value="${state.txnSearch || ""}" />

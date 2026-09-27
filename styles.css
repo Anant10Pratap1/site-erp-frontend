@@ -191,6 +191,93 @@ html, body {
 .kpi-label { font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px; }
 .kpi-value { font-size: 22px; font-weight: 700; }
 
+.kpi-card-green { border-left: 3px solid #10b981; }
+.kpi-card-green .kpi-value { color: #0f9d6a; }
+.kpi-card-red { border-left: 3px solid #ef4444; }
+.kpi-card-red .kpi-value { color: #dc2626; }
+.kpi-card-blue { border-left: 3px solid #3b82f6; }
+.kpi-card-blue .kpi-value { color: #2563eb; }
+
+/* Dashboard / Projects-home page */
+.dash-action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.dash-action-btn {
+  font-size: 12.5px;
+  padding: 8px 14px;
+}
+.project-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dash-project-row {
+  cursor: pointer;
+}
+.dash-project-row:hover {
+  background: var(--accent-soft);
+}
+.progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.progress-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* Party tab: avatar + name cell */
+.party-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.party-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Generic colored tag chips (Party type / status, etc.) */
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tag-blue   { background: #dbeafe; color: #1d4ed8; }
+.tag-orange { background: #ffedd5; color: #c2410c; }
+.tag-purple { background: #ede9fe; color: #6d28d9; }
+.tag-green  { background: #dcfce7; color: #15803d; }
+.tag-yellow { background: #fef9c3; color: #a16207; }
+.tag-gray   { background: #e5e7eb; color: #4b5563; }
+
+.tag-status-green { background: #dcfce7; color: #15803d; }
+.tag-status-red   { background: #fee2e2; color: #b91c1c; }
+.tag-status-blue  { background: #dbeafe; color: #1d4ed8; }
+.tag-status-gray  { background: #e5e7eb; color: #4b5563; }
+
 /* Project list grid */
 .project-grid {
   display: grid;
